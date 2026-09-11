@@ -1,0 +1,21 @@
+# A mission is the central task the whole R&D team works toward.
+#
+# Pick a mission where "correct" is CHECKABLE — that's how you know the system
+# is producing knowledge and not just confident-sounding text. This example is
+# literature-synthesis flavored: every claim must trace to a quoted source.
+
+title: Solid-state EV battery feasibility
+goal: >
+  Assess whether a solid-state EV battery achieving >500 Wh/kg, 1000-cycle life,
+  and <$80/kWh manufacturing cost is plausible with known materials, and identify
+  the specific bottlenecks that would have to be solved.
+
+success_criteria:
+  - Every advancing hypothesis has at least one supported claim backed by a quoted source.
+  - The top bottlenecks are named explicitly, each tied to a falsifiable assumption.
+
+# Budget: a hard ceiling the orchestrator enforces before each model call.
+budget_usd: 5.00
+
+# Stop when no new supported claim appears for this many consecutive rounds.
+stall_rounds: 2
