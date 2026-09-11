@@ -109,6 +109,54 @@ class LLMClient:
         )
         return data, usage
 
+    def research(
+        self, query: str, model: str = "claude-opus-5", max_uses: int = 5
+    ) -> tuple[str, Usage]:
+        """Pull outside information via web search. Returns (notes, usage).
+
+        This is what lets agents think beyond what the user provided — they go
+        find sources on their own. Best-effort: any failure returns empty notes
+        so the agent still runs on what it has.
+        """
+        if self.mock:
+            return _mock_research(query), Usage(input_tokens=len(query) // 4, output_tokens=80)
+
+        client = self._anthropic()
+        messages: list = [
+            {
+                "role": "user",
+                "content": (
+                    "Research this question using web search and summarize the key facts, "
+                    "with source names/URLs inline. Be concise and factual.\n\n" + query
+                ),
+            }
+        ]
+        tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_uses}]
+        parts: list[str] = []
+        usage = Usage()
+        try:
+            for _ in range(6):  # allow a few pause_turn cycles for tool use
+                resp = client.messages.create(
+                    model=model,
+                    max_tokens=4000,
+                    thinking={"type": "adaptive"},
+                    tools=tools,
+                    messages=messages,
+                )
+                usage.input_tokens += resp.usage.input_tokens
+                usage.output_tokens += resp.usage.output_tokens
+                for block in resp.content:
+                    if getattr(block, "type", None) == "text":
+                        parts.append(block.text)
+                if resp.stop_reason == "pause_turn":
+                    messages.append({"role": "assistant", "content": resp.content})
+                    continue
+                break
+        except Exception:
+            return "", usage
+        usage.cost_usd = estimate_cost(model, usage.input_tokens, usage.output_tokens)
+        return "\n".join(parts).strip(), usage
+
 
 # --------------------------------------------------------------------------
 # Mock responses — deterministic, role-appropriate output so the loop runs
@@ -116,7 +164,7 @@ class LLMClient:
 # SHAPE of collaboration, not real research.
 # --------------------------------------------------------------------------
 def _mock_response(role: str, context: str) -> dict:
-    snippet = " ".join(context.split()[:12])
+    snippet = " ".join(context.split()[:16])
     ctx_lower = context.lower()
     # Distinctive phrases only in the catalyst mission's own text — avoids matching
     # the generic word "catalysts" that appears in the trading knowledge docs.
@@ -130,6 +178,21 @@ def _mock_response(role: str, context: str) -> dict:
             "momentum", "catalyst", "expectancy", "out-of-sample", "drawdown", "edge",
         )
     )
+    battery = any(
+        w in ctx_lower
+        for w in ("electrolyte", "dendrite", "wh/kg", "battery", "cathode", "anode")
+    )
+
+    # Ideator runs in any domain: bold, divergent, cross-domain angles.
+    if role == "ideator":
+        return {
+            "angles": [
+                f"Attack it from first principles: what is the real constraint behind '{snippet}'?",
+                "Borrow a mechanism from an unrelated field that solved a similar constraint.",
+                "Invert the goal — what would guarantee failure? — then avoid exactly that.",
+                "Find the cheapest experiment that would falsify the obvious approach fast.",
+            ]
+        }
 
     if role == "proposer" and catalyst:
         return {
@@ -173,7 +236,7 @@ def _mock_response(role: str, context: str) -> dict:
                 "Edge measured on one synthetic/limited history may not survive regime change.",
             ]
         }
-    if role == "proposer":
+    if role == "proposer" and battery:
         return {
             "statement": "A sulfide-based solid electrolyte with a thin protective "
             "interlayer is the most promising path to the target energy density.",
@@ -184,7 +247,7 @@ def _mock_response(role: str, context: str) -> dict:
                 "A protective interlayer suppresses lithium dendrite formation at high rates.",
             ],
         }
-    if role == "researcher":
+    if role == "researcher" and battery:
         return {
             "findings": [
                 {
@@ -240,7 +303,7 @@ def _mock_response(role: str, context: str) -> dict:
             "rationale": "The backtest oracle supports positive OOS Sharpe after costs; "
             "turnover is borderline and regime dependence remains a real risk.",
         }
-    if role == "critic":
+    if role == "critic" and battery:
         return {
             "critiques": [
                 {
@@ -255,7 +318,7 @@ def _mock_response(role: str, context: str) -> dict:
                 },
             ]
         }
-    if role == "skeptic":
+    if role == "skeptic" and battery:
         return {
             "failure_modes": [
                 "Dendrites still nucleate at grain boundaries above 4C charging.",
@@ -263,7 +326,7 @@ def _mock_response(role: str, context: str) -> dict:
                 "Thin interlayers may not survive volume changes over 1000 cycles.",
             ]
         }
-    if role == "judge":
+    if role == "judge" and battery:
         return {
             "claim_scores": [
                 {"claim": "high ionic conductivity", "status": "supported"},
@@ -274,4 +337,75 @@ def _mock_response(role: str, context: str) -> dict:
             "claim has no evidence and is heavily contested. Advance with the "
             "dendrite claim demoted to an open question.",
         }
+
+    # --- Generic fallback: any other domain (e.g. the vehicle mission) ---------
+    if role == "proposer":
+        return {
+            "statement": f"A focused, first-principles approach to the goal: {snippet}",
+            "prediction": "The single dominant constraint, once identified and measured, "
+            "predicts whether the approach can reach the target.",
+            "claims": [
+                "The dominant constraint can be identified and measured directly.",
+                "A concrete, testable configuration reaches the target within safety limits.",
+            ],
+        }
+    if role == "researcher":
+        return {
+            "findings": [
+                {
+                    "claim": "The dominant constraint can be identified and measured.",
+                    "evidence": [
+                        {
+                            "source": "web:mock-source",
+                            "quote": "(mock) Standard references describe how to measure the "
+                            "key quantity and the accepted safe operating limits.",
+                            "relevance": "Supports that the constraint is measurable.",
+                        }
+                    ],
+                },
+                {"claim": "A testable configuration reaches the target.", "evidence": []},
+            ]
+        }
+    if role == "critic":
+        return {
+            "critiques": [
+                {
+                    "text": "The plan assumes the target is reachable without hitting a "
+                    "hard physical or legal limit — that assumption is unverified.",
+                    "leverage": 8,
+                },
+                {
+                    "text": "The second claim has no evidence yet; it is the load-bearing step.",
+                    "leverage": 6,
+                },
+            ]
+        }
+    if role == "skeptic":
+        return {
+            "failure_modes": [
+                "The target may exceed a safety limit, making it unsafe rather than merely hard.",
+                "Measurement error in the feedback signal could push the system past a limit.",
+                "A regulatory or warranty constraint may make the approach impractical in reality.",
+            ]
+        }
+    if role == "judge":
+        return {
+            "claim_scores": [
+                {"claim": "dominant constraint can be identified and measured", "status": "supported"},
+                {"claim": "configuration reaches the target within limits", "status": "contested"},
+            ],
+            "confidence": 0.4,
+            "rationale": "The constraint is measurable per cited references; whether the "
+            "target is reachable within safety limits needs evidence, not assertion.",
+        }
     return {"note": f"mock output for role={role}: {snippet}"}
+
+
+def _mock_research(query: str) -> str:
+    """Canned stand-in for web research, used in --mock mode."""
+    topic = " ".join(query.split()[:12])
+    return (
+        "(mock web research) Key sources agree on how to measure the target quantity "
+        "and the accepted safe operating limits for this domain. Relevant background "
+        f"for: {topic}. [example.com/reference, example.org/standard]"
+    )

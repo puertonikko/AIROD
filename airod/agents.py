@@ -94,6 +94,13 @@ _SCHEMAS: dict[str, dict] = {
         },
         "required": ["risks"],
     },
+    "ideator": {
+        "type": "object",
+        "properties": {
+            "angles": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["angles"],
+    },
     "judge": {
         "type": "object",
         "properties": {
@@ -126,6 +133,7 @@ class Agent:
     model: str
     system_prompt: str
     sector: KnowledgeSector | None = None
+    web: bool = False  # if True, the agent pulls outside info via web search
 
     def schema(self) -> dict:
         return _SCHEMAS.get(self.role, {"type": "object"})
@@ -133,26 +141,39 @@ class Agent:
     def run(self, llm: LLMClient, task: str) -> tuple[dict, Usage]:
         """Call the model for this agent's task and return (result, usage).
 
-        If the agent has a knowledge sector, relevant passages are retrieved and
-        injected so the agent grounds its output in real quoted text.
+        Grounding sources, in order of preference:
+          * web research (if ``web`` is set) — outside information the agent finds
+          * a local knowledge sector — documents the user provided
+        Both are injected into the prompt so the agent grounds its output.
         """
         user = task
+        extra_usage = Usage()
+
+        if self.web:
+            notes, wusage = llm.research(task, model=self.model)
+            extra_usage = wusage
+            if notes:
+                user = f"{user}\n\n--- Web research notes (cite these) ---\n{notes}"
+
         if self.sector is not None and not self.sector.is_empty:
             passages = self.sector.retrieve(task, k=4)
             if passages:
-                block = "\n\n".join(
-                    f"[{p.source}] {p.text}" for p in passages
-                )
+                block = "\n\n".join(f"[{p.source}] {p.text}" for p in passages)
                 user = (
-                    f"{task}\n\n--- Retrieved source passages (quote from these) ---\n{block}"
+                    f"{user}\n\n--- Retrieved source passages (quote from these) ---\n{block}"
                 )
-        return llm.complete_json(
+
+        result, usage = llm.complete_json(
             system=self.system_prompt,
             user=user,
             model=self.model,
             agent_role=self.role,
             schema=self.schema(),
         )
+        usage.input_tokens += extra_usage.input_tokens
+        usage.output_tokens += extra_usage.output_tokens
+        usage.cost_usd += extra_usage.cost_usd
+        return result, usage
 
 
 def load_agents(config_path: str) -> dict[str, Agent]:
@@ -171,6 +192,7 @@ def load_agents(config_path: str) -> dict[str, Agent]:
             model=entry["model"],
             system_prompt=entry["system_prompt"].strip(),
             sector=sector,
+            web=bool(entry.get("web", False)),
         )
         agents[agent.role] = agent
     return agents

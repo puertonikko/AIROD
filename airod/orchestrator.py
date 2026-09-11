@@ -118,6 +118,20 @@ class Orchestrator:
         self._log(f"\n=== Round {round_index} ===")
         ctx = self._mission_context()
 
+        # 0. DIVERGE (optional) — the Ideator generates bold, cross-domain angles
+        # BEFORE the Proposer commits, so the team doesn't just think incrementally.
+        if "ideator" in self.agents:
+            idea = self._call(self.agents["ideator"], ctx, round_index)
+            angles = idea.get("angles", [])
+            if angles:
+                self._log(f"  ideator: {len(angles)} angles generated")
+                ctx = (
+                    ctx
+                    + "\n\nBold candidate angles (pick, refine, or combine the most "
+                    "promising — do not just take the obvious one):\n"
+                    + "\n".join(f"- {a}" for a in angles)
+                )
+
         # 1. PROPOSE
         prop = self._call(self.agents["proposer"], ctx, round_index)
         hyp = Hypothesis(

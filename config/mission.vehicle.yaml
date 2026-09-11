@@ -1,0 +1,29 @@
+# An open, non-trading mission — proof the R&D team generalizes and thinks
+# outside the box with OUTSIDE information (web research), not just your data.
+#
+#   python -m airod run --mission config/mission.vehicle.yaml \
+#       --agents config/agents.general.yaml --rounds 3
+#
+# (Runs in --mock to prove the pipeline; runs for REAL with an ANTHROPIC_API_KEY,
+# where the Researcher actually web-searches. No backtest oracle — this is a
+# research/design question grounded in cited sources.)
+
+title: Reach a target horsepower by re-tuning a vehicle, using OBD-II as feedback
+goal: >
+  Design a safe, methodical way to optimize a gasoline vehicle to a specific
+  requested horsepower by adjusting its tuning, using the vehicle's OBD-II live
+  data as the feedback signal. Determine which parameters actually reach the
+  target (fuel, spark/timing, boost, VE, torque limits), which must be changed
+  by re-flashing the ECU versus merely read over OBD-II, how to estimate current
+  horsepower from OBD-II telemetry, and the safety limits (knock, AFR, EGT,
+  thermal) and legal constraints (emissions) that bound the answer. Assume an
+  off-road/track use case where emissions-legal street operation is not required.
+
+success_criteria:
+  - Correctly separates what OBD-II can READ from what must be WRITTEN by re-flashing.
+  - Names the specific tuning parameters that move horsepower and their safe ranges.
+  - Gives a closed-loop method to converge on the target HP from OBD-II feedback.
+  - States the safety and legal limits that bound the result.
+
+budget_usd: 5.00
+stall_rounds: 2

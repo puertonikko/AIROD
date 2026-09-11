@@ -54,6 +54,27 @@ Everything the agents produce is written to a local SQLite project memory
 python -m airod status --mission-id 1
 ```
 
+## Open questions in any domain (thinking outside the box)
+
+The team is domain-general. Point it at anything — not just the built-in
+battery/trading examples — using the general team, which **thinks outside the
+box** two ways:
+
+- An **Ideator** runs first each round, generating bold, cross-domain, contrarian
+  angles *before* the Proposer commits — so you don't just get incremental ideas.
+- The **Researcher pulls outside information via web search** (live mode), so the
+  team learns from the world, not only from documents you provided.
+
+```bash
+# e.g. "reach a target horsepower by re-tuning a vehicle via OBD-II feedback"
+python -m airod run --mission config/mission.vehicle.yaml \
+    --agents config/agents.general.yaml --rounds 3          # add ANTHROPIC_API_KEY for real web research
+```
+
+Write your own `config/mission.*.yaml` (a title + goal) and run it with
+`--agents config/agents.general.yaml`. That's the whole interface: give it a
+mission, read the debate, steer, repeat.
+
 ## Concepts
 
 | Piece | File | What it does |
