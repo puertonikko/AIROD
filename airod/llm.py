@@ -90,13 +90,18 @@ class LLMClient:
             )
 
         client = self._anthropic()
+        # Prompt-based JSON: robust across models/accounts/SDK versions. (Strict
+        # output_config json_schema mode rejects loose schemas with a 400.)
+        instructed = (
+            f"{user}\n\nRespond with ONLY a single JSON object matching this schema "
+            f"(no prose, no markdown fences):\n{json.dumps(schema)}"
+        )
         resp = client.messages.create(
             model=model,
             max_tokens=8000,
             thinking={"type": "adaptive"},
             system=system,
-            output_config={"format": {"type": "json_schema", "schema": schema}},
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": instructed}],
         )
         text = "".join(
             block.text for block in resp.content if getattr(block, "type", None) == "text"
