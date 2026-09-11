@@ -14,9 +14,11 @@ The /run response is serialized in the camelCase shape the Next.js UI expects
 from __future__ import annotations
 
 import os
+import traceback
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from airod.agents import load_agents
@@ -25,6 +27,11 @@ from airod.llm import LLMClient
 from airod.memory import Memory
 from airod.models import Hypothesis, Mission
 from airod.orchestrator import Orchestrator, RoundResult
+
+# Resolve relative config/data paths against the repo root regardless of the
+# process working directory (Railway can start uvicorn from elsewhere).
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 
 AGENTS_PATH = os.environ.get("AIROD_AGENTS", "config/agents.yaml")
 DB_PATH = os.environ.get("AIROD_DB", "airod_memory.db")
@@ -101,39 +108,51 @@ def health() -> dict:
 
 
 @app.post("/run")
-def run(req: RunRequest) -> dict:
+def run(req: RunRequest):
     use_mock = req.mock if req.mock is not None else not os.environ.get("ANTHROPIC_API_KEY")
+    try:
+        mission = Mission(
+            title=req.title,
+            goal=req.goal,
+            budget_usd=req.budget_usd,
+        )
+        memory = Memory(DB_PATH)
+        mission.id = memory.create_mission(mission)
 
-    mission = Mission(
-        title=req.title,
-        goal=req.goal,
-        budget_usd=req.budget_usd,
-    )
-    memory = Memory(DB_PATH)
-    mission.id = memory.create_mission(mission)
+        agents = load_agents(req.agents_path)
+        llm = LLMClient(mock=use_mock)
+        tool = build_oracle(
+            {"oracle": req.oracle, "backtest": req.backtest, "event": req.event}
+        )
+        orch = Orchestrator(mission, agents, llm, memory, verbose=False, backtest_tool=tool)
+        results = orch.run(max_rounds=req.rounds)
 
-    agents = load_agents(req.agents_path)
-    llm = LLMClient(mock=use_mock)
-    tool = build_oracle(
-        {"oracle": req.oracle, "backtest": req.backtest, "event": req.event}
-    )
-    orch = Orchestrator(mission, agents, llm, memory, verbose=False, backtest_tool=tool)
-    results = orch.run(max_rounds=req.rounds)
-
-    payload = {
-        "mode": "mock" if use_mock else "live",
-        "mission": {"title": mission.title, "goal": mission.goal, "rounds": req.rounds},
-        "agents": [
-            {
-                "name": a.name,
-                "role": a.role,
-                "model": a.model,
-                "blurb": _blurb(a.system_prompt),
-            }
-            for a in agents.values()
-        ],
-        "rounds": [_serialize_round(r) for r in results],
-        "costUsd": memory.total_cost(mission.id),
-    }
-    memory.close()
-    return payload
+        payload = {
+            "mode": "mock" if use_mock else "live",
+            "mission": {"title": mission.title, "goal": mission.goal, "rounds": req.rounds},
+            "agents": [
+                {
+                    "name": a.name,
+                    "role": a.role,
+                    "model": a.model,
+                    "blurb": _blurb(a.system_prompt),
+                }
+                for a in agents.values()
+            ],
+            "rounds": [_serialize_round(r) for r in results],
+            "costUsd": memory.total_cost(mission.id),
+        }
+        memory.close()
+        return payload
+    except Exception as exc:  # surface the real reason instead of an opaque 500
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": f"{type(exc).__name__}: {exc}",
+                "hint": (
+                    "Check that ANTHROPIC_API_KEY is set on Railway with billing "
+                    "credits, and that the agents config path exists."
+                ),
+            },
+        )

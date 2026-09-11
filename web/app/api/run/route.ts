@@ -49,7 +49,16 @@ export async function POST(req: Request) {
         // Railway handles the long run; the browser sees one request.
         signal: AbortSignal.timeout(55_000),
       });
-      if (!res.ok) throw new Error(`backend ${res.status}`);
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const body = await res.json();
+          detail = body?.detail || JSON.stringify(body);
+        } catch {
+          /* non-JSON error body */
+        }
+        throw new Error(`backend ${res.status}${detail ? " — " + detail : ""}`);
+      }
       const data = (await res.json()) as RunResponse;
       return NextResponse.json(data);
     } catch (err) {
