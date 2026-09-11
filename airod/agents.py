@@ -23,6 +23,15 @@ _SCHEMAS: dict[str, dict] = {
             "statement": {"type": "string"},
             "prediction": {"type": "string"},
             "claims": {"type": "array", "items": {"type": "string"}},
+            # Optional: a machine-runnable strategy the oracle can backtest.
+            # Only trading missions fill this in.
+            "strategy": {
+                "type": "object",
+                "properties": {
+                    "strategy": {"type": "string"},
+                    "params": {"type": "object"},
+                },
+            },
         },
         "required": ["statement", "prediction", "claims"],
     },
@@ -77,6 +86,13 @@ _SCHEMAS: dict[str, dict] = {
             "failure_modes": {"type": "array", "items": {"type": "string"}}
         },
         "required": ["failure_modes"],
+    },
+    "risk": {
+        "type": "object",
+        "properties": {
+            "risks": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["risks"],
     },
     "judge": {
         "type": "object",

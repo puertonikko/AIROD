@@ -1,0 +1,40 @@
+# Trading research mission. The goal is reframed away from "make $1M" (which no
+# system can honestly promise) toward something the backtest oracle can CHECK:
+# an edge that survives out-of-sample testing with realistic costs.
+#
+# The $1M target lives as a risk/return constraint you steer with, not as the
+# thing the agents optimize directly.
+
+title: Find a trading edge that survives out-of-sample testing
+goal: >
+  Design a trading strategy whose edge survives an out-of-sample backtest with
+  realistic transaction costs. Report expected return, max drawdown, and the
+  conditions under which the edge disappears. Reject strategies that only look
+  good in-sample.
+
+success_criteria:
+  - The advancing strategy has a positive out-of-sample Sharpe after costs.
+  - Out-of-sample max drawdown stays within the risk limit.
+  - Failure conditions (regime, costs, capacity) are named explicitly.
+
+# Turn on the backtest oracle and configure it.
+oracle: backtest
+backtest:
+  data:
+    symbols: [AAA, BBB, CCC, DDD]   # synthetic universe; swap for a CSV of real closes
+    days: 900
+    seed: 7
+    # csv: data/prices.csv           # date,SYM1,SYM2,... of closes (overrides synthetic)
+  train_frac: 0.6                    # first 60% in-sample, last 40% out-of-sample
+  cost_bps: 5.0                      # per-side transaction cost
+  min_oos_sharpe: 0.3                # gate: out-of-sample Sharpe must clear this
+  max_dd_limit: 0.25                 # gate: out-of-sample drawdown ceiling
+  min_trades: 5                      # gate: enough trades to be meaningful
+  # Wire autotrader's model in as a signal (for the signal_threshold strategy).
+  # This backtests whether trading on the model's score has real edge.
+  # signal:
+  #   type: autotrader
+  #   url: https://your-autotrader-ai.up.railway.app
+
+budget_usd: 5.00
+stall_rounds: 2

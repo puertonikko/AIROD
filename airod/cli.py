@@ -11,11 +11,15 @@ from .llm import LLMClient
 from .memory import Memory
 from .models import Mission
 from .orchestrator import Orchestrator
+from .tools.backtest import BacktestTool, load_prices_csv, synthetic_prices
 
 
-def _load_mission(path: str) -> Mission:
+def _load_cfg(path: str) -> dict:
     with open(path, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+        return yaml.safe_load(f)
+
+
+def _mission_from_cfg(cfg: dict) -> Mission:
     return Mission(
         title=cfg["title"],
         goal=cfg["goal"],
@@ -25,19 +29,60 @@ def _load_mission(path: str) -> Mission:
     )
 
 
+def build_backtest_tool(cfg: dict) -> BacktestTool | None:
+    """Construct the backtest oracle from a mission's `backtest:` block."""
+    if cfg.get("oracle") != "backtest":
+        return None
+    bt = cfg.get("backtest", {})
+    data = bt.get("data", {})
+    if isinstance(data, dict) and data.get("csv"):
+        prices = load_prices_csv(data["csv"])
+    else:
+        prices = synthetic_prices(
+            symbols=list(data.get("symbols", ["AAA", "BBB", "CCC"])),
+            days=int(data.get("days", 750)),
+            seed=int(data.get("seed", 7)),
+        )
+    # Optional signal provider for the signal_threshold strategy. Wiring in
+    # autotrader's /predict service turns "does the model add edge?" into a
+    # measurable, out-of-sample question.
+    signal = None
+    sig = bt.get("signal", {})
+    if isinstance(sig, dict) and sig.get("type") == "autotrader" and sig.get("url"):
+        from .tools.autotrader_signal import AutotraderSignal
+
+        signal = AutotraderSignal(sig["url"])
+
+    return BacktestTool(
+        prices,
+        train_frac=float(bt.get("train_frac", 0.6)),
+        cost_bps=float(bt.get("cost_bps", 5.0)),
+        min_oos_sharpe=float(bt.get("min_oos_sharpe", 0.3)),
+        max_dd_limit=float(bt.get("max_dd_limit", 0.25)),
+        min_trades=int(bt.get("min_trades", 5)),
+        signal=signal,
+    )
+
+
 def cmd_run(args: argparse.Namespace) -> None:
-    mission = _load_mission(args.mission)
+    cfg = _load_cfg(args.mission)
+    mission = _mission_from_cfg(cfg)
     memory = Memory(args.db)
     mission.id = memory.create_mission(mission)
 
     agents = load_agents(args.agents)
     llm = LLMClient(mock=args.mock)
+    tool = build_backtest_tool(cfg)
 
     mode = "MOCK (offline, no cost)" if args.mock else "LIVE (real API calls)"
+    oracle = "backtest" if tool else "none"
     print(f"Mission #{mission.id}: {mission.title}")
-    print(f"Mode: {mode}   Budget: ${mission.budget_usd:.2f}   Max rounds: {args.rounds}")
+    print(
+        f"Mode: {mode}   Oracle: {oracle}   "
+        f"Budget: ${mission.budget_usd:.2f}   Max rounds: {args.rounds}"
+    )
 
-    orch = Orchestrator(mission, agents, llm, memory)
+    orch = Orchestrator(mission, agents, llm, memory, backtest_tool=tool)
     orch.run(max_rounds=args.rounds)
 
     print(f"\nInspect results:  python -m airod status --mission-id {mission.id} --db {args.db}")
@@ -57,6 +102,16 @@ def cmd_status(args: argparse.Namespace) -> None:
     hyps = memory.hypotheses_for(mission.id)
     for h in hyps:
         print(f"[{h.status.value}] (r{h.round_index}, conf {h.confidence:.2f}) {h.statement}")
+        if h.backtest:
+            b = h.backtest
+            o = b.get("outSample", {})
+            verdict = "PASS" if b.get("passed") else "FAIL"
+            print(
+                f"    backtest[{b.get('strategy')}] {verdict}: "
+                f"OOS Sharpe {o.get('sharpe', 0):.2f}, "
+                f"return {o.get('total_return', 0) * 100:.1f}%, "
+                f"maxDD {o.get('max_drawdown', 0) * 100:.1f}% — {b.get('reason')}"
+            )
         for c in h.claims:
             mark = {"supported": "+", "contested": "~", "unsupported": "-"}.get(
                 c.status.value, "?"

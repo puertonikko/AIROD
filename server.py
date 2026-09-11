@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from airod.agents import load_agents
+from airod.cli import build_backtest_tool
 from airod.llm import LLMClient
 from airod.memory import Memory
 from airod.models import Hypothesis, Mission
@@ -46,6 +47,10 @@ class RunRequest(BaseModel):
     rounds: int = 3
     budget_usd: float = 5.0
     mock: bool | None = None  # force mock; None = auto (mock if no API key)
+    # Optional: run a different team and turn on the backtest oracle (trading).
+    agents_path: str = AGENTS_PATH
+    oracle: str | None = None            # "backtest" enables the oracle
+    backtest: dict = {}                  # oracle config (see mission.trading.yaml)
 
 
 def _blurb(system_prompt: str) -> str:
@@ -83,6 +88,8 @@ def _serialize_round(r: RoundResult) -> dict:
                 {"authorRole": cr.author_role, "text": cr.text, "leverage": cr.leverage}
                 for cr in h.critiques
             ],
+            "strategy": h.strategy,
+            "backtest": h.backtest,
         },
     }
 
@@ -104,9 +111,10 @@ def run(req: RunRequest) -> dict:
     memory = Memory(DB_PATH)
     mission.id = memory.create_mission(mission)
 
-    agents = load_agents(AGENTS_PATH)
+    agents = load_agents(req.agents_path)
     llm = LLMClient(mock=use_mock)
-    orch = Orchestrator(mission, agents, llm, memory, verbose=False)
+    tool = build_backtest_tool({"oracle": req.oracle, "backtest": req.backtest})
+    orch = Orchestrator(mission, agents, llm, memory, verbose=False, backtest_tool=tool)
     results = orch.run(max_rounds=req.rounds)
 
     payload = {

@@ -77,6 +77,10 @@ class Hypothesis:
     status: HypothesisStatus = HypothesisStatus.ACTIVE
     round_index: int = 0
     id: int | None = None
+    # Optional machine-runnable artifact + its oracle result (e.g. a trading
+    # strategy spec and its backtest metrics). Empty for non-tool missions.
+    strategy: dict[str, Any] = field(default_factory=dict)
+    backtest: dict[str, Any] = field(default_factory=dict)
 
     def supported_claims(self) -> list[Claim]:
         return [c for c in self.claims if c.status == ClaimStatus.SUPPORTED]
@@ -91,6 +95,8 @@ class Hypothesis:
             "confidence": self.confidence,
             "status": self.status.value,
             "round_index": self.round_index,
+            "strategy": self.strategy,
+            "backtest": self.backtest,
         }
 
 

@@ -25,6 +25,10 @@ from .models import (
     HypothesisStatus,
     Mission,
 )
+from .tools.backtest import BacktestTool, StrategySpec
+
+# Keywords used to attach the backtest result to the claim it measures.
+_ORACLE_KEYS = {"sharpe", "sample", "edge", "return", "backtest", "cost", "costs", "drawdown"}
 
 
 @dataclass
@@ -63,12 +67,14 @@ class Orchestrator:
         llm: LLMClient,
         memory: Memory,
         verbose: bool = True,
+        backtest_tool: BacktestTool | None = None,
     ) -> None:
         self.mission = mission
         self.agents = agents
         self.llm = llm
         self.memory = memory
         self.verbose = verbose
+        self.backtest_tool = backtest_tool
         self._require_roles(["proposer", "researcher", "critic", "skeptic", "judge"])
 
     def _require_roles(self, roles: list[str]) -> None:
@@ -122,6 +128,10 @@ class Orchestrator:
         )
         self._log(f"  proposer: {hyp.statement}")
 
+        # 1b. MEASURE — if a strategy was proposed and we have an oracle, backtest it.
+        # The oracle result is authoritative for the claim it measures.
+        oracle_claim, oracle_passed = self._measure(hyp, prop.get("strategy"), round_index)
+
         # 2. GROUND — attach quoted evidence to claims
         ground_task = (
             f"Hypothesis: {hyp.statement}\nClaims:\n"
@@ -152,7 +162,12 @@ class Orchestrator:
         skeptic = self._call(self.agents["skeptic"], attack_task, round_index)
         for fm in skeptic.get("failure_modes", []):
             hyp.critiques.append(Critique(author_role="skeptic", text=fm, leverage=0))
-        self._log(f"  critic+skeptic: {len(hyp.critiques)} objections raised")
+        # Optional Risk agent (trading missions): sizing and drawdown concerns.
+        if "risk" in self.agents:
+            risk = self._call(self.agents["risk"], attack_task, round_index)
+            for rk in risk.get("risks", []):
+                hyp.critiques.append(Critique(author_role="risk", text=rk, leverage=0))
+        self._log(f"  attackers: {len(hyp.critiques)} objections raised")
 
         # 4. SCORE — judge sees claims, evidence, and objections; NOT who wrote them
         judge_task = self._judge_view(hyp)
@@ -161,6 +176,13 @@ class Orchestrator:
         for claim in hyp.claims:
             claim.status = _best_status(claim.text, scores)
         hyp.confidence = float(verdict.get("confidence", 0.0))
+
+        # The backtest oracle overrides the Judge for the claim it measured:
+        # a real out-of-sample result beats an opinion.
+        if oracle_claim is not None and oracle_passed is not None:
+            oracle_claim.status = (
+                ClaimStatus.SUPPORTED if oracle_passed else ClaimStatus.UNSUPPORTED
+            )
 
         # 5. RESOLVE — apply the orchestrator's advancement rules
         supported = hyp.supported_claims()
@@ -207,6 +229,45 @@ class Orchestrator:
             if overlap > best_overlap:
                 best, best_overlap = claim, overlap
         return best
+
+    @staticmethod
+    def _match_oracle_claim(hyp: Hypothesis) -> Claim | None:
+        """The claim the backtest speaks to (about edge/Sharpe/returns)."""
+        best, best_overlap = None, 0
+        for claim in hyp.claims:
+            overlap = len(_tokens(claim.text) & _ORACLE_KEYS)
+            if overlap > best_overlap:
+                best, best_overlap = claim, overlap
+        if best is not None:
+            return best
+        return hyp.claims[0] if hyp.claims else None
+
+    def _measure(
+        self, hyp: Hypothesis, strategy_dict: dict | None, round_index: int
+    ) -> tuple[Claim | None, bool | None]:
+        """Run the backtest oracle on a proposed strategy, if both exist."""
+        if self.backtest_tool is None:
+            return None, None
+        spec = StrategySpec.from_dict(strategy_dict)
+        if spec is None:
+            return None, None
+        result = self.backtest_tool.run(spec)
+        hyp.strategy = {"strategy": spec.strategy, "params": spec.params}
+        hyp.backtest = result.to_dict()
+        claim = self._match_oracle_claim(hyp)
+        if claim is not None:
+            claim.evidence.append(
+                Evidence(
+                    source="backtest",
+                    quote=result.evidence_quote(),
+                    relevance="Out-of-sample backtest oracle.",
+                )
+            )
+        self._log(
+            f"  oracle: {spec.strategy} -> {'PASS' if result.passed else 'FAIL'} "
+            f"({result.reason})"
+        )
+        return claim, result.passed
 
     # -- full mission -----------------------------------------------------
     def run(self, max_rounds: int) -> list[RoundResult]:

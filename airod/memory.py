@@ -201,4 +201,6 @@ class Memory:
             confidence=d.get("confidence", 0.0),
             status=HypothesisStatus(d.get("status", "active")),
             round_index=d.get("round_index", 0),
+            strategy=d.get("strategy", {}),
+            backtest=d.get("backtest", {}),
         )

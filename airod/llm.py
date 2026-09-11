@@ -117,6 +117,31 @@ class LLMClient:
 # --------------------------------------------------------------------------
 def _mock_response(role: str, context: str) -> dict:
     snippet = " ".join(context.split()[:12])
+    trading = any(
+        w in context.lower() for w in ("strateg", "trading", "backtest", "sharpe")
+    )
+
+    if role == "proposer" and trading:
+        return {
+            "statement": "A simple moving-average crossover captures momentum with "
+            "controlled turnover, giving a positive risk-adjusted return net of costs.",
+            "prediction": "Out-of-sample Sharpe stays above 0.5 after 5bps costs, with "
+            "max drawdown under 20%.",
+            "claims": [
+                "The crossover strategy has a positive out-of-sample Sharpe after costs.",
+                "Turnover is low enough that transaction costs do not erase the edge.",
+            ],
+            "strategy": {"strategy": "sma_crossover", "params": {"fast": 10, "slow": 50}},
+        }
+    if role == "risk":
+        return {
+            "risks": [
+                "Position sizing must cap per-trade risk; a crossover can whipsaw in "
+                "choppy regimes and stack losses.",
+                "Max drawdown budget should force de-risking before capital is impaired.",
+                "Edge measured on one synthetic/limited history may not survive regime change.",
+            ]
+        }
     if role == "proposer":
         return {
             "statement": "A sulfide-based solid electrolyte with a thin protective "
@@ -147,6 +172,39 @@ def _mock_response(role: str, context: str) -> dict:
                     "evidence": [],
                 },
             ]
+        }
+    if role == "critic" and trading:
+        return {
+            "critiques": [
+                {
+                    "text": "In-sample Sharpe far exceeds out-of-sample — a classic "
+                    "overfitting signature the backtest split should expose.",
+                    "leverage": 8,
+                },
+                {
+                    "text": "The edge claim rests on one price history; parameters may be "
+                    "curve-fit to it.",
+                    "leverage": 6,
+                },
+            ]
+        }
+    if role == "skeptic" and trading:
+        return {
+            "failure_modes": [
+                "Edge evaporates once realistic slippage and spread are modeled.",
+                "Momentum crossovers whipsaw and bleed in range-bound regimes.",
+                "Survivorship or lookahead bias in the data would inflate returns.",
+            ]
+        }
+    if role == "judge" and trading:
+        return {
+            "claim_scores": [
+                {"claim": "positive out-of-sample Sharpe after costs", "status": "supported"},
+                {"claim": "turnover low enough that costs do not erase edge", "status": "contested"},
+            ],
+            "confidence": 0.55,
+            "rationale": "The backtest oracle supports positive OOS Sharpe after costs; "
+            "turnover is borderline and regime dependence remains a real risk.",
         }
     if role == "critic":
         return {
