@@ -1,0 +1,36 @@
+# Catalyst-edge research mission. Uses the EVENT-study oracle over your
+# catalyst_training data (not the price backtester).
+#
+#   python -m airod run --mission config/mission.catalyst.yaml \
+#       --agents config/agents.catalyst.yaml --rounds 3 --mock
+#
+# The team searches for a FILTER over catalysts (confidence, confirmation,
+# catalyst type, premarket gap...) whose edge survives out-of-sample.
+
+title: Find a catalyst filter with out-of-sample edge
+goal: >
+  Using the catalyst event log, find a filter (by confidence, confirmation,
+  catalyst type, or premarket gap) whose same-day expectancy is positive
+  out-of-sample after costs, with enough signals to be tradable. Report the
+  filter, its expectancy and hit rate, and where the edge breaks down.
+
+success_criteria:
+  - The advancing filter has positive out-of-sample expectancy after costs.
+  - It keeps at least the minimum number of out-of-sample signals.
+  - Conditions where the edge disappears are named explicitly.
+
+oracle: event_backtest
+event:
+  # Ships pointing at a SYNTHETIC sample so the public repo runs. For real
+  # research, swap to your git-ignored export:
+  #   data: data/catalyst_training.csv
+  data: examples/data/catalyst_sample.csv
+  train_frac: 0.6                # older 60% in-sample, newer 40% out-of-sample
+  cost_bps: 10.0                 # round-trip cost per trade
+  min_oos_expectancy_pct: 0.0    # gate: OOS mean return per trade must clear this
+  max_dd_limit: 0.25             # gate: OOS equity drawdown ceiling
+  min_signals: 10                # gate: reject filters too selective to trust
+  # mapping: {}                  # override column names here if your export differs
+
+budget_usd: 5.00
+stall_rounds: 2

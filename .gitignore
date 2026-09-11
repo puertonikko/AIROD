@@ -9,3 +9,6 @@ env/
 .env
 .DS_Store
 airod_memory.db
+
+# Real trading/catalyst data — never commit to a public repo.
+/data/

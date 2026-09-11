@@ -12,6 +12,7 @@ from .memory import Memory
 from .models import Mission
 from .orchestrator import Orchestrator
 from .tools.backtest import BacktestTool, load_prices_csv, synthetic_prices
+from .tools.event_backtest import EventBacktestTool, load_catalyst_csv
 
 
 def _load_cfg(path: str) -> dict:
@@ -64,6 +65,33 @@ def build_backtest_tool(cfg: dict) -> BacktestTool | None:
     )
 
 
+def build_event_tool(cfg: dict) -> EventBacktestTool | None:
+    """Construct the event-study oracle from a mission's `event:` block."""
+    ev = cfg.get("event", {})
+    path = ev.get("data")
+    if not path:
+        return None
+    events = load_catalyst_csv(path, ev.get("mapping"))
+    return EventBacktestTool(
+        events,
+        train_frac=float(ev.get("train_frac", 0.6)),
+        cost_bps=float(ev.get("cost_bps", 10.0)),
+        min_oos_expectancy_pct=float(ev.get("min_oos_expectancy_pct", 0.0)),
+        max_dd_limit=float(ev.get("max_dd_limit", 0.25)),
+        min_signals=int(ev.get("min_signals", 10)),
+    )
+
+
+def build_oracle(cfg: dict):
+    """Dispatch to the right oracle for the mission's `oracle:` type."""
+    oracle = cfg.get("oracle")
+    if oracle == "backtest":
+        return build_backtest_tool(cfg)
+    if oracle == "event_backtest":
+        return build_event_tool(cfg)
+    return None
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     cfg = _load_cfg(args.mission)
     mission = _mission_from_cfg(cfg)
@@ -72,10 +100,10 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     agents = load_agents(args.agents)
     llm = LLMClient(mock=args.mock)
-    tool = build_backtest_tool(cfg)
+    tool = build_oracle(cfg)
 
     mode = "MOCK (offline, no cost)" if args.mock else "LIVE (real API calls)"
-    oracle = "backtest" if tool else "none"
+    oracle = cfg.get("oracle", "none") if tool else "none"
     print(f"Mission #{mission.id}: {mission.title}")
     print(
         f"Mode: {mode}   Oracle: {oracle}   "
@@ -106,12 +134,21 @@ def cmd_status(args: argparse.Namespace) -> None:
             b = h.backtest
             o = b.get("outSample", {})
             verdict = "PASS" if b.get("passed") else "FAIL"
-            print(
-                f"    backtest[{b.get('strategy')}] {verdict}: "
-                f"OOS Sharpe {o.get('sharpe', 0):.2f}, "
-                f"return {o.get('total_return', 0) * 100:.1f}%, "
-                f"maxDD {o.get('max_drawdown', 0) * 100:.1f}% — {b.get('reason')}"
-            )
+            if "expectancy_pct" in o:  # event-study oracle
+                print(
+                    f"    backtest[{b.get('strategy')}] {verdict}: "
+                    f"OOS {o.get('n_signals', 0)} signals, "
+                    f"hit {o.get('hit_rate', 0) * 100:.0f}%, "
+                    f"expectancy {o.get('expectancy_pct', 0):+.2f}%/trade, "
+                    f"total {o.get('total_return', 0) * 100:+.1f}% — {b.get('reason')}"
+                )
+            else:  # price time-series oracle
+                print(
+                    f"    backtest[{b.get('strategy')}] {verdict}: "
+                    f"OOS Sharpe {o.get('sharpe', 0):.2f}, "
+                    f"return {o.get('total_return', 0) * 100:.1f}%, "
+                    f"maxDD {o.get('max_drawdown', 0) * 100:.1f}% — {b.get('reason')}"
+                )
         for c in h.claims:
             mark = {"supported": "+", "contested": "~", "unsupported": "-"}.get(
                 c.status.value, "?"

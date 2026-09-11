@@ -59,6 +59,43 @@ The Proposer then uses `signal_threshold`, and the backtester calls
 off). If the edge isn't there after costs, the model isn't adding value — which
 is exactly what you want to know before trading real money.
 
+## Event-study backtesting your catalyst data
+
+Your `catalyst_training` log is **event** data (a catalyst fired → it moved
+`eod_pct` by end of day), not a price series — so it uses a different oracle,
+the **event-study backtester**. A strategy here is a *filter* over catalysts
+(confidence, confirmation, catalyst type, premarket gap), and the oracle reports
+hit rate, expectancy per trade, and an equity curve — split out-of-sample by
+time, net of costs.
+
+Because you logged catalysts **whether or not you traded them**, expectancy is
+the *true* base rate of the signal, free of selection bias.
+
+```bash
+# Runs on a committed SYNTHETIC sample out of the box:
+python -m airod run --mission config/mission.catalyst.yaml \
+    --agents config/agents.catalyst.yaml --rounds 3 --mock
+python -m airod status --mission-id 1
+```
+
+**Using your real export:** export `catalyst_training` from Supabase to CSV,
+drop it at `data/catalyst_training.csv` (this path is git-ignored — real data is
+never committed to the public repo), and point the mission at it:
+
+```yaml
+# config/mission.catalyst.yaml
+event:
+  data: data/catalyst_training.csv
+  min_signals: 20        # raise the bar so tiny, noisy subsets can't "pass"
+```
+
+If your column names differ from the default export, set `event.mapping` (see
+`airod/tools/event_backtest.py` → `DEFAULT_MAP`).
+
+**A caution the oracle enforces for you:** a filter that shows +2.7% on 5
+out-of-sample trades is noise, not edge. The `min_signals` gate rejects it — keep
+it strict on small datasets, and trust filters that hold up across many signals.
+
 ## The workflow (how you "work with them")
 
 1. Run the mission; read the round transcript.

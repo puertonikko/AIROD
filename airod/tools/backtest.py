@@ -333,3 +333,23 @@ class BacktestTool:
         return BacktestResult(
             spec=spec, in_sample=in_s, out_sample=out_s, passed=passed, reason=reason
         )
+
+    # Unified oracle interface used by the orchestrator (matches EventBacktestTool).
+    def evaluate(self, strategy_dict: dict | None):
+        spec = StrategySpec.from_dict(strategy_dict)
+        if spec is None:
+            return None
+        # Only act on price strategies; ignore specs meant for another oracle.
+        if spec.strategy not in ("sma_crossover", "rsi_reversion", "signal_threshold"):
+            return None
+        r = self.run(spec)
+        return OracleResult(r.passed, r.evidence_quote(), r.to_dict())
+
+
+@dataclass
+class OracleResult:
+    """What any oracle hands back to the orchestrator."""
+
+    passed: bool
+    quote: str
+    payload: dict

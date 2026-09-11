@@ -25,7 +25,7 @@ from .models import (
     HypothesisStatus,
     Mission,
 )
-from .tools.backtest import BacktestTool, StrategySpec
+from .tools.backtest import BacktestTool  # any oracle with .evaluate() works
 
 # Keywords used to attach the backtest result to the claim it measures.
 _ORACLE_KEYS = {"sharpe", "sample", "edge", "return", "backtest", "cost", "costs", "drawdown"}
@@ -245,29 +245,35 @@ class Orchestrator:
     def _measure(
         self, hyp: Hypothesis, strategy_dict: dict | None, round_index: int
     ) -> tuple[Claim | None, bool | None]:
-        """Run the backtest oracle on a proposed strategy, if both exist."""
+        """Run the oracle on a proposed strategy, if an oracle and spec exist.
+
+        Works with any oracle exposing ``.evaluate(spec) -> result`` with
+        ``.passed``, ``.quote``, and ``.payload`` (price or event backtester).
+        """
         if self.backtest_tool is None:
             return None, None
-        spec = StrategySpec.from_dict(strategy_dict)
-        if spec is None:
+        res = self.backtest_tool.evaluate(strategy_dict)
+        if res is None:
             return None, None
-        result = self.backtest_tool.run(spec)
-        hyp.strategy = {"strategy": spec.strategy, "params": spec.params}
-        hyp.backtest = result.to_dict()
+        hyp.strategy = {
+            "strategy": res.payload.get("strategy"),
+            "params": res.payload.get("params", {}),
+        }
+        hyp.backtest = res.payload
         claim = self._match_oracle_claim(hyp)
         if claim is not None:
             claim.evidence.append(
                 Evidence(
                     source="backtest",
-                    quote=result.evidence_quote(),
+                    quote=res.quote,
                     relevance="Out-of-sample backtest oracle.",
                 )
             )
         self._log(
-            f"  oracle: {spec.strategy} -> {'PASS' if result.passed else 'FAIL'} "
-            f"({result.reason})"
+            f"  oracle: {res.payload.get('strategy')} -> "
+            f"{'PASS' if res.passed else 'FAIL'} ({res.payload.get('reason')})"
         )
-        return claim, result.passed
+        return claim, res.passed
 
     # -- full mission -----------------------------------------------------
     def run(self, max_rounds: int) -> list[RoundResult]:

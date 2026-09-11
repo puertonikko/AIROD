@@ -117,10 +117,41 @@ class LLMClient:
 # --------------------------------------------------------------------------
 def _mock_response(role: str, context: str) -> dict:
     snippet = " ".join(context.split()[:12])
-    trading = any(
-        w in context.lower() for w in ("strateg", "trading", "backtest", "sharpe")
+    ctx_lower = context.lower()
+    # Distinctive phrases only in the catalyst mission's own text — avoids matching
+    # the generic word "catalysts" that appears in the trading knowledge docs.
+    catalyst = "catalyst filter" in ctx_lower or "catalyst event" in ctx_lower
+    # Finance terms that appear in trading/catalyst hypotheses (for the attacker
+    # roles, whose only context is the hypothesis text), but not battery ones.
+    trading = catalyst or any(
+        w in ctx_lower
+        for w in (
+            "strateg", "trading", "backtest", "sharpe", "crossover",
+            "momentum", "catalyst", "expectancy", "out-of-sample", "drawdown", "edge",
+        )
     )
 
+    if role == "proposer" and catalyst:
+        return {
+            "statement": "Confirmed catalysts with a high confidence score carry a "
+            "positive same-day edge; trading only that subset filters out the noise.",
+            "prediction": "Out-of-sample expectancy is positive after costs when "
+            "filtering to confirmed catalysts with confidence >= 60.",
+            "claims": [
+                "Filtering to confirmed, high-confidence catalysts has positive "
+                "out-of-sample expectancy after costs.",
+                "The filter keeps enough signals to be tradable.",
+            ],
+            "strategy": {
+                "strategy": "catalyst_filter",
+                "params": {
+                    "direction": "long",
+                    "require_confirmed": True,
+                    "min_score": 60,
+                    "outcome_field": "outcome_pct",
+                },
+            },
+        }
     if role == "proposer" and trading:
         return {
             "statement": "A simple moving-average crossover captures momentum with "
@@ -173,6 +204,9 @@ def _mock_response(role: str, context: str) -> dict:
                 },
             ]
         }
+    if role == "researcher" and trading:
+        # The backtest oracle is the grounding here; don't attach unrelated quotes.
+        return {"findings": []}
     if role == "critic" and trading:
         return {
             "critiques": [
