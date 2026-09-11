@@ -1,13 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DEFAULT_MISSION, DEFAULT_TEAM, PROTOCOL_STEPS } from "@/lib/agents";
+import { DEFAULT_TEAM, PRESETS, PROTOCOL_STEPS } from "@/lib/agents";
 import type { RunResponse } from "@/lib/types";
 
 export default function Home() {
-  const [title, setTitle] = useState(DEFAULT_MISSION.title);
-  const [goal, setGoal] = useState(DEFAULT_MISSION.goal);
-  const [rounds, setRounds] = useState(DEFAULT_MISSION.rounds);
+  const [presetId, setPresetId] = useState(PRESETS[0].id);
+  const [title, setTitle] = useState(PRESETS[0].title);
+  const [goal, setGoal] = useState(PRESETS[0].goal);
+  const [rounds, setRounds] = useState(3);
+
+  const onPreset = (id: string) => {
+    const p = PRESETS.find((x) => x.id === id) ?? PRESETS[0];
+    setPresetId(p.id);
+    setTitle(p.title);
+    setGoal(p.goal);
+  };
   const [running, setRunning] = useState(false);
   const [resp, setResp] = useState<RunResponse | null>(null);
   const [revealed, setRevealed] = useState(0);
@@ -38,7 +46,7 @@ export default function Home() {
       const res = await fetch("/api/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title, goal, rounds }),
+        body: JSON.stringify({ title, goal, rounds, presetId }),
       });
       const data = (await res.json()) as RunResponse;
       if (!res.ok) throw new Error((data as any).error || "Run failed");
@@ -79,6 +87,18 @@ export default function Home() {
         {/* Mission */}
         <section className="card mission">
           <p className="section-title">Mission</p>
+          <label htmlFor="preset">Team &amp; oracle</label>
+          <select
+            id="preset"
+            value={presetId}
+            onChange={(e) => onPreset(e.target.value)}
+          >
+            {PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
           <label htmlFor="title">Title</label>
           <input id="title" value={title} onChange={(e) => setTitle(e.target.value)} />
           <label htmlFor="goal">Goal</label>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { runMock } from "@/lib/orchestrator";
-import { DEFAULT_TEAM } from "@/lib/agents";
+import { DEFAULT_TEAM, PRESETS } from "@/lib/agents";
 import type { Mission, RunResponse } from "@/lib/types";
 
 // Vercel: keep this on the Node runtime; give it headroom for the proxy hop.
@@ -16,6 +16,7 @@ export const maxDuration = 60;
  */
 export async function POST(req: Request) {
   let mission: Mission;
+  let presetId = "general";
   try {
     const body = await req.json();
     mission = {
@@ -23,10 +24,12 @@ export async function POST(req: Request) {
       goal: String(body.goal ?? ""),
       rounds: Number(body.rounds ?? 3),
     };
+    presetId = String(body.presetId ?? "general");
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
+  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0];
   const backend = process.env.AIROD_API_URL;
 
   if (backend) {
@@ -34,7 +37,15 @@ export async function POST(req: Request) {
       const res = await fetch(`${backend.replace(/\/$/, "")}/run`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(mission),
+        body: JSON.stringify({
+          title: mission.title,
+          goal: mission.goal,
+          rounds: mission.rounds,
+          agents_path: preset.agentsPath,
+          oracle: preset.oracle ?? null,
+          backtest: preset.backtest ?? {},
+          event: preset.event ?? {},
+        }),
         // Railway handles the long run; the browser sees one request.
         signal: AbortSignal.timeout(55_000),
       });
