@@ -159,6 +159,10 @@ export default function Home() {
               </option>
             ))}
           </select>
+          <p style={{ fontSize: 12, color: "var(--text-faint)", margin: "6px 0 0" }}>
+            This picks the team &amp; tools — not the question. Type <b>any</b> mission
+            below; &ldquo;Open question&rdquo; handles anything.
+          </p>
           <label htmlFor="title">Title</label>
           <input id="title" value={title} onChange={(e) => setTitle(e.target.value)} />
           <label htmlFor="goal">Goal</label>
