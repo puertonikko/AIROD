@@ -68,6 +68,7 @@ export interface Preset {
   oracle?: "backtest" | "event_backtest";
   backtest?: Record<string, unknown>;
   event?: Record<string, unknown>;
+  dossier?: boolean;
   title: string;
   goal: string;
 }
@@ -75,8 +76,9 @@ export interface Preset {
 export const PRESETS: Preset[] = [
   {
     id: "general",
-    label: "Open question — general team + web research",
+    label: "Open question — general team + web research + R&D dossier",
     agentsPath: "config/agents.general.yaml",
+    dossier: true,
     title: "Reach a target horsepower by re-tuning a vehicle via OBD-II feedback",
     goal:
       "Design a safe, methodical way to optimize a gasoline vehicle to a specific " +

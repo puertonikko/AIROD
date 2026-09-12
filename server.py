@@ -61,6 +61,7 @@ class RunRequest(BaseModel):
     oracle: str | None = None            # "backtest" | "event_backtest"
     backtest: dict = {}                  # price-oracle config (mission.trading.yaml)
     event: dict = {}                     # event-oracle config (mission.catalyst.yaml)
+    dossier: bool = False                # also compile a manufacturer-ready dossier
 
 
 def _blurb(system_prompt: str) -> str:
@@ -144,8 +145,38 @@ def _execute(req: RunRequest, progress=None) -> dict:
 
     results = orch.run(max_rounds=req.rounds, on_round=_on_round)
     payload = _payload(results)
+
+    # Handoff stage: compile the debate into a manufacturer-ready dossier.
+    if req.dossier and results:
+        if progress is not None:
+            progress({**payload, "synthesizing": True})
+        transcript = _compile_transcript(results)
+        sections, _ = llm.synthesize(mission.title, mission.goal, transcript)
+        payload["dossier"] = sections
+        payload["costUsd"] = memory.total_cost(mission.id)
+
     memory.close()
     return payload
+
+
+def _compile_transcript(results) -> str:
+    """Flatten the debate into text the synthesizer can build a dossier from."""
+    lines: list[str] = []
+    for r in results:
+        h = r.hypothesis
+        lines.append(f"\n## Round {r.round_index} — [{h.status.value}] (confidence {h.confidence:.2f})")
+        lines.append(f"Hypothesis: {h.statement}")
+        if h.prediction:
+            lines.append(f"Prediction: {h.prediction}")
+        for c in h.claims:
+            lines.append(f"- [{c.status.value}] {c.text}")
+            for ev in c.evidence:
+                lines.append(f"    evidence [{ev.source}]: {ev.quote}")
+        for cr in h.critiques:
+            lines.append(f"- objection ({cr.author_role}): {cr.text}")
+        if h.backtest:
+            lines.append(f"Backtest: {h.backtest}")
+    return "\n".join(lines)
 
 
 _HINT = (

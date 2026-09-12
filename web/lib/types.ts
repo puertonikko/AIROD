@@ -54,6 +54,11 @@ export interface Agent {
   blurb: string;
 }
 
+export interface DossierSection {
+  title: string;
+  markdown: string;
+}
+
 export interface RunResponse {
   mode: "mock" | "live";
   mission: Mission;
@@ -61,4 +66,6 @@ export interface RunResponse {
   rounds: RoundResult[];
   costUsd: number;
   warning?: string;
+  dossier?: DossierSection[];
+  synthesizing?: boolean;
 }

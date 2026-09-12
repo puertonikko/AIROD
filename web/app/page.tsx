@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_TEAM, PRESETS, PROTOCOL_STEPS } from "@/lib/agents";
 import type { RunResponse } from "@/lib/types";
+import Dossier from "@/components/Dossier";
 
 export default function Home() {
   const [presetId, setPresetId] = useState(PRESETS[0].id);
@@ -294,6 +295,21 @@ export default function Home() {
               );
             })}
           </section>
+        )}
+
+        {running && resp?.synthesizing && (
+          <section className="card">
+            <p style={{ margin: 0, fontSize: 14, color: "var(--text-dim)" }}>
+              <span className="spinner" />
+              Debate complete — the Lead Engineer is now compiling the R&amp;D handoff
+              dossier (spec, architecture, diagrams, test plan). This is one deep pass;
+              give it a minute.
+            </p>
+          </section>
+        )}
+
+        {resp?.dossier && resp.dossier.length > 0 && (
+          <Dossier sections={resp.dossier} title={resp.mission.title} />
         )}
 
         <p className="footer-note">

@@ -221,6 +221,19 @@ html, body {
 }
 .footer-note { margin-top: 24px; font-size: 12px; color: var(--text-faint); line-height: 1.5; }
 .footer-note code { font-family: var(--mono); background: var(--bg-elev-2); padding: 1px 5px; border-radius: 4px; }
+/* Dossier */
+.doc-section { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+.doc-section > h3 { font-size: 15px; margin: 0 0 8px; color: var(--text); }
+.doc-md { font-size: 14px; line-height: 1.55; color: var(--text-dim); }
+.doc-md h1, .doc-md h2, .doc-md h3, .doc-md strong { color: var(--text); }
+.doc-md table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; display: block; overflow-x: auto; }
+.doc-md th, .doc-md td { border: 1px solid var(--border-strong); padding: 6px 8px; text-align: left; }
+.doc-md th { background: var(--bg-elev-2); }
+.doc-md code { font-family: var(--mono); background: var(--bg-elev-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.doc-md pre { background: var(--bg-elev-2); padding: 10px; border-radius: 8px; overflow-x: auto; }
+.doc-md ul, .doc-md ol { padding-left: 20px; }
+.mermaid { background: var(--bg-elev-2); border-radius: 8px; padding: 14px; margin: 10px 0; overflow-x: auto; text-align: center; }
+
 .spinner {
   display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(255,255,255,0.4);
   border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 8px;

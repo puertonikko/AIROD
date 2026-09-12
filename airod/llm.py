@@ -185,6 +185,136 @@ class LLMClient:
             )
         return notes, usage
 
+    def synthesize(
+        self, mission_title: str, mission_goal: str, transcript: str,
+        model: str = "claude-opus-5",
+    ) -> tuple[list[dict], Usage]:
+        """Compile the debate into a manufacturer-ready R&D dossier.
+
+        Returns (sections, usage) where each section is {"title", "markdown"}.
+        Diagrams are emitted as ```mermaid fenced blocks the UI renders.
+        """
+        if self.mock:
+            return _mock_dossier(mission_title), Usage(input_tokens=200, output_tokens=400)
+
+        system = (
+            "You are the Lead R&D Engineer compiling a complete, manufacturer-ready "
+            "handoff dossier from your team's findings. Be concrete, quantitative, and "
+            "practical — an outside engineer must be able to build from this. Use the "
+            "team's actual conclusions; do not invent capabilities. Flag every "
+            "assumption and every item needing licensed-engineer or lab verification."
+        )
+        sections_spec = (
+            "Produce these sections in order: "
+            "1) Executive Summary; 2) Requirements & Constraints (table); "
+            "3) System Architecture (a ```mermaid graph/flowchart block diagram); "
+            "4) Engineering Analysis & Calculations (key equations, a worked example, "
+            "tolerances); 5) Software / Process Flow (a ```mermaid flowchart AND a "
+            "```mermaid sequenceDiagram); 6) Interfaces & Signals (tables); "
+            "7) Test & Validation Plan; 8) Risks & Open Questions (from the critics/"
+            "skeptics); 9) Manufacturing Handoff Checklist & Bill of Materials."
+        )
+        user = (
+            f"MISSION: {mission_title}\nGOAL: {mission_goal}\n\n"
+            f"TEAM FINDINGS (hypotheses, claims, evidence, critiques):\n{transcript}\n\n"
+            f"{sections_spec}\n\n"
+            'Return ONLY a JSON object: {"sections":[{"title": str, "markdown": str}]}. '
+            "Put diagrams inside ```mermaid fenced code blocks. No prose outside the JSON."
+        )
+
+        client = self._anthropic()
+        usage = Usage()
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=32000,
+                thinking={"type": "adaptive"},
+                output_config={"effort": "high"},  # this is the deliverable — spend here
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            ) as stream:
+                msg = stream.get_final_message()
+        except Exception as exc:
+            print(f"[synthesize] failed: {type(exc).__name__}: {exc}", flush=True)
+            return [], usage
+
+        text = "".join(
+            b.text for b in msg.content if getattr(b, "type", None) == "text"
+        )
+        usage.input_tokens = msg.usage.input_tokens
+        usage.output_tokens = msg.usage.output_tokens
+        usage.cost_usd = estimate_cost(model, usage.input_tokens, usage.output_tokens)
+        try:
+            return _extract_json(text).get("sections", []), usage
+        except Exception:
+            # Fall back to a single free-text section so nothing is lost.
+            return [{"title": "R&D Dossier", "markdown": text}], usage
+
+
+def _mock_dossier(title: str) -> list[dict]:
+    """A representative handoff dossier (mock) so the UI + diagrams render offline."""
+    return [
+        {
+            "title": "1. Executive Summary",
+            "markdown": (
+                f"**Mission:** {title}\n\n"
+                "_(Mock dossier — connect live models for a real, sourced package.)_\n\n"
+                "This document is the R&D team's handoff package: requirements, "
+                "architecture, engineering analysis, process flow, interfaces, a test "
+                "plan, risks, and a manufacturing checklist."
+            ),
+        },
+        {
+            "title": "2. Requirements & Constraints",
+            "markdown": (
+                "| # | Requirement | Target | Constraint |\n"
+                "|---|---|---|---|\n"
+                "| R1 | Primary objective | (target) | safety envelope |\n"
+                "| R2 | Interface | defined | standards-compliant |\n"
+            ),
+        },
+        {
+            "title": "3. System Architecture",
+            "markdown": (
+                "```mermaid\nflowchart LR\n"
+                "  IN[Input data] --> P[Processor]\n"
+                "  P --> SOLVE[Physics / solver]\n"
+                "  SOLVE --> GUARD{Safety limits OK?}\n"
+                "  GUARD -- yes --> OUT[Computed output]\n"
+                "  GUARD -- no --> ABORT[Abort + report]\n```"
+            ),
+        },
+        {
+            "title": "4. Engineering Analysis & Calculations",
+            "markdown": (
+                "Key relation (illustrative):\n\n"
+                "`Output = f(inputs)` subject to `constraint(inputs) < limit`.\n\n"
+                "A worked example and tolerances go here in a live run."
+            ),
+        },
+        {
+            "title": "5. Software / Process Flow",
+            "markdown": (
+                "```mermaid\nsequenceDiagram\n"
+                "  actor User\n  participant App\n  participant Engine\n"
+                "  User->>App: upload data\n  App->>Engine: compute\n"
+                "  Engine-->>App: result + flags\n  App-->>User: report\n```"
+            ),
+        },
+        {
+            "title": "6. Test & Validation Plan",
+            "markdown": "- Unit checks\n- Bench validation\n- Field/verification pass",
+        },
+        {
+            "title": "7. Risks & Open Questions",
+            "markdown": "- (from Skeptic/Critic) safety, legal, and accuracy limits to verify.",
+        },
+        {
+            "title": "8. Manufacturing Handoff Checklist & BOM",
+            "markdown": "- [ ] Engineer review\n- [ ] Prototype\n- [ ] Validation sign-off",
+        },
+    ]
+
 
 # --------------------------------------------------------------------------
 # Mock responses — deterministic, role-appropriate output so the loop runs

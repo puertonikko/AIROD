@@ -46,6 +46,7 @@ export async function POST(req: Request) {
         oracle: preset.oracle ?? null,
         backtest: preset.backtest ?? {},
         event: preset.event ?? {},
+        dossier: preset.dossier ?? false,
       }),
       signal: AbortSignal.timeout(20_000),
     });
