@@ -45,10 +45,7 @@ export default function Home() {
   const reveal = (data: RunResponse) => {
     setResp(data);
     setActiveStep(-1);
-    setRevealed(0);
-    data.rounds.forEach((_, i) => {
-      timers.current.push(setTimeout(() => setRevealed(i + 1), i * 650));
-    });
+    setRevealed(data.rounds.length);
   };
 
   const run = useCallback(async () => {
@@ -78,10 +75,10 @@ export default function Home() {
       // 2. Poll until the job finishes. The long work runs on Railway (no
       // timeout); each poll is a quick round-trip, so nothing times out here.
       const jobId = start.jobId as string;
-      const deadline = Date.now() + 6 * 60 * 1000;
+      const deadline = Date.now() + 15 * 60 * 1000;
       const poll = async () => {
         if (Date.now() > deadline) {
-          setError("Run timed out after 6 minutes.");
+          setError("Run timed out after 15 minutes.");
           setRunning(false);
           return;
         }
@@ -89,8 +86,13 @@ export default function Home() {
         try {
           const r = await fetch(`/api/status?jobId=${jobId}`);
           const job = await r.json();
+          // Stream partial rounds as they finish (job.result present while running).
+          if (job.result) {
+            setResp(job.result as RunResponse);
+            setRevealed((job.result as RunResponse).rounds.length);
+          }
           if (job.status === "done") {
-            reveal(job.result as RunResponse);
+            setActiveStep(-1);
             setRunning(false);
             return;
           }
@@ -216,12 +218,13 @@ export default function Home() {
           </div>
         </section>
 
-        {running && !resp && (
+        {running && (
           <section className="card">
             <p style={{ margin: 0, fontSize: 14, color: "var(--text-dim)" }}>
               <span className="spinner" />
-              Agents are working… a live run can take 1–3 minutes. This page keeps
-              polling — you don&apos;t need to refresh.
+              {resp
+                ? "Working on the next round… results stream in below as each round finishes."
+                : "Agents are working… the first round can take a minute or two. This page keeps polling — no need to refresh."}
             </p>
           </section>
         )}

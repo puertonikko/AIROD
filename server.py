@@ -109,8 +109,9 @@ def health() -> dict:
     return {"ok": True, "hasKey": bool(os.environ.get("ANTHROPIC_API_KEY"))}
 
 
-def _execute(req: RunRequest) -> dict:
-    """Run one mission synchronously and return the serialized payload."""
+def _execute(req: RunRequest, progress=None) -> dict:
+    """Run one mission. ``progress(payload)`` receives a partial payload after
+    each round so callers can stream results while the run continues."""
     use_mock = req.mock if req.mock is not None else not os.environ.get("ANTHROPIC_API_KEY")
     mission = Mission(title=req.title, goal=req.goal, budget_usd=req.budget_usd)
     memory = Memory(DB_PATH)
@@ -122,18 +123,27 @@ def _execute(req: RunRequest) -> dict:
         {"oracle": req.oracle, "backtest": req.backtest, "event": req.event}
     )
     orch = Orchestrator(mission, agents, llm, memory, verbose=False, backtest_tool=tool)
-    results = orch.run(max_rounds=req.rounds)
 
-    payload = {
-        "mode": "mock" if use_mock else "live",
-        "mission": {"title": mission.title, "goal": mission.goal, "rounds": req.rounds},
-        "agents": [
-            {"name": a.name, "role": a.role, "model": a.model, "blurb": _blurb(a.system_prompt)}
-            for a in agents.values()
-        ],
-        "rounds": [_serialize_round(r) for r in results],
-        "costUsd": memory.total_cost(mission.id),
-    }
+    agent_list = [
+        {"name": a.name, "role": a.role, "model": a.model, "blurb": _blurb(a.system_prompt)}
+        for a in agents.values()
+    ]
+
+    def _payload(results) -> dict:
+        return {
+            "mode": "mock" if use_mock else "live",
+            "mission": {"title": mission.title, "goal": mission.goal, "rounds": req.rounds},
+            "agents": agent_list,
+            "rounds": [_serialize_round(r) for r in results],
+            "costUsd": memory.total_cost(mission.id),
+        }
+
+    def _on_round(_result, results):
+        if progress is not None:
+            progress(_payload(results))
+
+    results = orch.run(max_rounds=req.rounds, on_round=_on_round)
+    payload = _payload(results)
     memory.close()
     return payload
 
@@ -165,8 +175,12 @@ _JOBS_LOCK = threading.Lock()
 
 
 def _run_job(job_id: str, req: RunRequest) -> None:
+    def progress(payload: dict) -> None:
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"status": "running", "result": payload}
+
     try:
-        result = _execute(req)
+        result = _execute(req, progress=progress)
         with _JOBS_LOCK:
             _JOBS[job_id] = {"status": "done", "result": result}
     except Exception as exc:

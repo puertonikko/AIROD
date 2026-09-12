@@ -13,6 +13,7 @@ Defaults follow current guidance: adaptive thinking, and per-agent model choice
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 
@@ -61,8 +62,11 @@ class BudgetExceeded(RuntimeError):
 
 
 class LLMClient:
-    def __init__(self, mock: bool = False) -> None:
+    def __init__(self, mock: bool = False, effort: str | None = None) -> None:
         self.mock = mock
+        # Lower effort = far faster + cheaper. These are bounded tasks, so "low"
+        # is a good default; override via AIROD_EFFORT (low|medium|high|xhigh|max).
+        self.effort = effort or os.environ.get("AIROD_EFFORT", "low")
         self._client = None  # lazy — mock mode needs no SDK
 
     def _anthropic(self):
@@ -100,6 +104,7 @@ class LLMClient:
             model=model,
             max_tokens=8000,
             thinking={"type": "adaptive"},
+            output_config={"effort": self.effort},
             system=system,
             messages=[{"role": "user", "content": instructed}],
         )
@@ -115,7 +120,7 @@ class LLMClient:
         return data, usage
 
     def research(
-        self, query: str, model: str = "claude-opus-5", max_uses: int = 5
+        self, query: str, model: str = "claude-opus-5", max_uses: int = 3
     ) -> tuple[str, Usage]:
         """Pull outside information via web search. Returns (notes, usage).
 
@@ -145,6 +150,7 @@ class LLMClient:
                     model=model,
                     max_tokens=4000,
                     thinking={"type": "adaptive"},
+                    output_config={"effort": self.effort},
                     tools=tools,
                     messages=messages,
                 )

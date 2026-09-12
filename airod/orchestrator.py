@@ -290,7 +290,9 @@ class Orchestrator:
         return claim, res.passed
 
     # -- full mission -----------------------------------------------------
-    def run(self, max_rounds: int) -> list[RoundResult]:
+    def run(self, max_rounds: int, on_round=None) -> list[RoundResult]:
+        """Run the mission. ``on_round(result, results)`` is called after each
+        round so a caller can stream partial progress."""
         results: list[RoundResult] = []
         stall = 0
         for i in range(1, max_rounds + 1):
@@ -300,6 +302,11 @@ class Orchestrator:
                 self._log(f"\nStopping: {exc}")
                 break
             results.append(result)
+            if on_round is not None:
+                try:
+                    on_round(result, results)
+                except Exception:
+                    pass
             if result.new_supported_claims == 0:
                 stall += 1
                 if stall >= self.mission.stall_rounds:
