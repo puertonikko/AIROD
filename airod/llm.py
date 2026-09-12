@@ -157,16 +157,33 @@ class LLMClient:
                 usage.input_tokens += resp.usage.input_tokens
                 usage.output_tokens += resp.usage.output_tokens
                 for block in resp.content:
-                    if getattr(block, "type", None) == "text":
+                    btype = getattr(block, "type", None)
+                    if btype == "text":
                         parts.append(block.text)
+                    elif btype == "web_search_tool_result":
+                        # Server-tool errors don't raise — they return an error
+                        # block. Surface it so a disabled tool isn't invisible.
+                        content = getattr(block, "content", None)
+                        if isinstance(content, dict) and content.get("error_code"):
+                            print(f"[research] web_search error: {content}", flush=True)
+                        elif hasattr(content, "error_code"):
+                            print(f"[research] web_search error: {content}", flush=True)
                 if resp.stop_reason == "pause_turn":
                     messages.append({"role": "assistant", "content": resp.content})
                     continue
                 break
-        except Exception:
+        except Exception as exc:
+            print(f"[research] web search failed: {type(exc).__name__}: {exc}", flush=True)
             return "", usage
         usage.cost_usd = estimate_cost(model, usage.input_tokens, usage.output_tokens)
-        return "\n".join(parts).strip(), usage
+        notes = "\n".join(parts).strip()
+        if not notes:
+            print(
+                "[research] no notes returned — web search may be disabled for this "
+                "Anthropic org (enable it in the Console), or returned no results.",
+                flush=True,
+            )
+        return notes, usage
 
 
 # --------------------------------------------------------------------------
