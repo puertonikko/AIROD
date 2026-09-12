@@ -14,7 +14,9 @@ The /run response is serialized in the camelCase shape the Next.js UI expects
 from __future__ import annotations
 
 import os
+import threading
 import traceback
+import uuid
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -107,52 +109,85 @@ def health() -> dict:
     return {"ok": True, "hasKey": bool(os.environ.get("ANTHROPIC_API_KEY"))}
 
 
+def _execute(req: RunRequest) -> dict:
+    """Run one mission synchronously and return the serialized payload."""
+    use_mock = req.mock if req.mock is not None else not os.environ.get("ANTHROPIC_API_KEY")
+    mission = Mission(title=req.title, goal=req.goal, budget_usd=req.budget_usd)
+    memory = Memory(DB_PATH)
+    mission.id = memory.create_mission(mission)
+
+    agents = load_agents(req.agents_path)
+    llm = LLMClient(mock=use_mock)
+    tool = build_oracle(
+        {"oracle": req.oracle, "backtest": req.backtest, "event": req.event}
+    )
+    orch = Orchestrator(mission, agents, llm, memory, verbose=False, backtest_tool=tool)
+    results = orch.run(max_rounds=req.rounds)
+
+    payload = {
+        "mode": "mock" if use_mock else "live",
+        "mission": {"title": mission.title, "goal": mission.goal, "rounds": req.rounds},
+        "agents": [
+            {"name": a.name, "role": a.role, "model": a.model, "blurb": _blurb(a.system_prompt)}
+            for a in agents.values()
+        ],
+        "rounds": [_serialize_round(r) for r in results],
+        "costUsd": memory.total_cost(mission.id),
+    }
+    memory.close()
+    return payload
+
+
+_HINT = (
+    "Check that ANTHROPIC_API_KEY is set on Railway with billing credits, "
+    "and that the agents config path exists."
+)
+
+
 @app.post("/run")
 def run(req: RunRequest):
-    use_mock = req.mock if req.mock is not None else not os.environ.get("ANTHROPIC_API_KEY")
+    """Synchronous run (kept for compatibility / small runs)."""
     try:
-        mission = Mission(
-            title=req.title,
-            goal=req.goal,
-            budget_usd=req.budget_usd,
-        )
-        memory = Memory(DB_PATH)
-        mission.id = memory.create_mission(mission)
-
-        agents = load_agents(req.agents_path)
-        llm = LLMClient(mock=use_mock)
-        tool = build_oracle(
-            {"oracle": req.oracle, "backtest": req.backtest, "event": req.event}
-        )
-        orch = Orchestrator(mission, agents, llm, memory, verbose=False, backtest_tool=tool)
-        results = orch.run(max_rounds=req.rounds)
-
-        payload = {
-            "mode": "mock" if use_mock else "live",
-            "mission": {"title": mission.title, "goal": mission.goal, "rounds": req.rounds},
-            "agents": [
-                {
-                    "name": a.name,
-                    "role": a.role,
-                    "model": a.model,
-                    "blurb": _blurb(a.system_prompt),
-                }
-                for a in agents.values()
-            ],
-            "rounds": [_serialize_round(r) for r in results],
-            "costUsd": memory.total_cost(mission.id),
-        }
-        memory.close()
-        return payload
-    except Exception as exc:  # surface the real reason instead of an opaque 500
+        return _execute(req)
+    except Exception as exc:
         traceback.print_exc()
         return JSONResponse(
-            status_code=500,
-            content={
-                "detail": f"{type(exc).__name__}: {exc}",
-                "hint": (
-                    "Check that ANTHROPIC_API_KEY is set on Railway with billing "
-                    "credits, and that the agents config path exists."
-                ),
-            },
+            status_code=500, content={"detail": f"{type(exc).__name__}: {exc}", "hint": _HINT}
         )
+
+
+# ── Async jobs ────────────────────────────────────────────────────────────
+# A live multi-agent run can take minutes — longer than any single HTTP request
+# survives. So start the job, return an id immediately, and let the client poll.
+# In-memory store (assumes a single Railway replica, which is the default).
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _run_job(job_id: str, req: RunRequest) -> None:
+    try:
+        result = _execute(req)
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"status": "done", "result": result}
+    except Exception as exc:
+        traceback.print_exc()
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"status": "error", "detail": f"{type(exc).__name__}: {exc}", "hint": _HINT}
+
+
+@app.post("/run/start")
+def run_start(req: RunRequest) -> dict:
+    job_id = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "running"}
+    threading.Thread(target=_run_job, args=(job_id, req), daemon=True).start()
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/run/status/{job_id}")
+def run_status(job_id: str):
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"detail": "unknown job id"})
+    return job

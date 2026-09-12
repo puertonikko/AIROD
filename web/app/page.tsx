@@ -29,6 +29,15 @@ export default function Home() {
   };
   useEffect(() => clearTimers, []);
 
+  const reveal = (data: RunResponse) => {
+    setResp(data);
+    setActiveStep(-1);
+    setRevealed(0);
+    data.rounds.forEach((_, i) => {
+      timers.current.push(setTimeout(() => setRevealed(i + 1), i * 650));
+    });
+  };
+
   const run = useCallback(async () => {
     clearTimers();
     setRunning(true);
@@ -37,32 +46,58 @@ export default function Home() {
     setRevealed(0);
     setActiveStep(0);
 
-    // Animate the protocol pipeline while the request is in flight.
-    PROTOCOL_STEPS.forEach((_, i) => {
-      timers.current.push(setTimeout(() => setActiveStep(i), i * 260));
-    });
-
     try {
-      const res = await fetch("/api/run", {
+      // 1. Start the run (fast). Live → jobId to poll; else an immediate mock.
+      const startRes = await fetch("/api/start", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title, goal, rounds, presetId }),
       });
-      const data = (await res.json()) as RunResponse;
-      if (!res.ok) throw new Error((data as any).error || "Run failed");
-      setResp(data);
-      setActiveStep(-1);
-      // Reveal rounds one at a time for a live, unfolding feel.
-      data.rounds.forEach((_, i) => {
-        timers.current.push(setTimeout(() => setRevealed(i + 1), i * 650));
-      });
+      const start = await startRes.json();
+      if (!startRes.ok) throw new Error(start.error || "Failed to start the run.");
+
+      if (start.mock) {
+        reveal({ ...start.data, warning: start.warning });
+        setRunning(false);
+        return;
+      }
+
+      // 2. Poll until the job finishes. The long work runs on Railway (no
+      // timeout); each poll is a quick round-trip, so nothing times out here.
+      const jobId = start.jobId as string;
+      const deadline = Date.now() + 6 * 60 * 1000;
+      const poll = async () => {
+        if (Date.now() > deadline) {
+          setError("Run timed out after 6 minutes.");
+          setRunning(false);
+          return;
+        }
+        setActiveStep((s) => (s + 1) % PROTOCOL_STEPS.length); // keep it cycling
+        try {
+          const r = await fetch(`/api/status?jobId=${jobId}`);
+          const job = await r.json();
+          if (job.status === "done") {
+            reveal(job.result as RunResponse);
+            setRunning(false);
+            return;
+          }
+          if (job.status === "error") {
+            setError(job.detail || "The run failed on the backend.");
+            setRunning(false);
+            return;
+          }
+        } catch {
+          /* transient — retry */
+        }
+        timers.current.push(setTimeout(poll, 3000));
+      };
+      timers.current.push(setTimeout(poll, 3000));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setActiveStep(-1);
-    } finally {
       setRunning(false);
     }
-  }, [title, goal, rounds]);
+  }, [title, goal, rounds, presetId]);
 
   const team = resp?.agents ?? DEFAULT_TEAM;
   const mode = resp?.mode ?? "mock";
@@ -158,6 +193,16 @@ export default function Home() {
             ))}
           </div>
         </section>
+
+        {running && !resp && (
+          <section className="card">
+            <p style={{ margin: 0, fontSize: 14, color: "var(--text-dim)" }}>
+              <span className="spinner" />
+              Agents are working… a live run can take 1–3 minutes. This page keeps
+              polling — you don&apos;t need to refresh.
+            </p>
+          </section>
+        )}
 
         {error && <div className="warning">Error: {error}</div>}
         {resp?.warning && <div className="warning">{resp.warning}</div>}
