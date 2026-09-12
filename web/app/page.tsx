@@ -21,6 +21,11 @@ export default function Home() {
   const [revealed, setRevealed] = useState(0);
   const [activeStep, setActiveStep] = useState<number>(-1);
   const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<{
+    configured: boolean;
+    ok?: boolean;
+    hasKey?: boolean;
+  } | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const clearTimers = () => {
@@ -28,6 +33,14 @@ export default function Home() {
     timers.current = [];
   };
   useEffect(() => clearTimers, []);
+
+  // Check real backend connectivity on load so the badge tells the truth.
+  useEffect(() => {
+    fetch("/api/health")
+      .then((r) => r.json())
+      .then(setHealth)
+      .catch(() => setHealth({ configured: false }));
+  }, []);
 
   const reveal = (data: RunResponse) => {
     setResp(data);
@@ -100,7 +113,16 @@ export default function Home() {
   }, [title, goal, rounds, presetId]);
 
   const team = resp?.agents ?? DEFAULT_TEAM;
-  const mode = resp?.mode ?? "mock";
+  // Badge reflects the last run if there is one, else live-backend connectivity.
+  const liveReady = !!(health?.configured && health?.ok && health?.hasKey);
+  const mode: "live" | "mock" = resp ? resp.mode : liveReady ? "live" : "mock";
+  let badgeLabel = "Mock mode";
+  if (resp) badgeLabel = resp.mode === "live" ? "Live models" : "Mock mode";
+  else if (health === null) badgeLabel = "Checking…";
+  else if (!health.configured) badgeLabel = "Mock · no backend URL";
+  else if (!health.ok) badgeLabel = "Mock · backend unreachable";
+  else if (!health.hasKey) badgeLabel = "Backend up · no API key";
+  else badgeLabel = "Live models";
 
   return (
     <div className="wrap">
@@ -114,7 +136,7 @@ export default function Home() {
         </div>
         <span className="badge">
           <span className={`dot ${mode}`} />
-          {mode === "live" ? "Live models" : "Mock mode"}
+          {badgeLabel}
         </span>
       </header>
 
