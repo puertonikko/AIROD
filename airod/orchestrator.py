@@ -92,7 +92,16 @@ class Orchestrator:
             raise RuntimeError(
                 f"Budget of ${self.mission.budget_usd:.2f} reached (spent ${cost:.2f})."
             )
-        result, usage = agent.run(self.llm, task)
+        # A single agent's failure (parse error, transient API error) must not
+        # discard the whole paid run — degrade to an empty result and continue.
+        try:
+            result, usage = agent.run(self.llm, task)
+        except Exception as exc:
+            import traceback as _tb
+
+            _tb.print_exc()
+            self._log(f"  [{agent.name}] failed, continuing: {type(exc).__name__}: {exc}")
+            return {}
         self.memory.record_call(
             self.mission.id,
             round_index,
@@ -135,7 +144,7 @@ class Orchestrator:
         # 1. PROPOSE
         prop = self._call(self.agents["proposer"], ctx, round_index)
         hyp = Hypothesis(
-            statement=prop["statement"],
+            statement=prop.get("statement", "(proposer returned no parseable output)"),
             prediction=prop.get("prediction", ""),
             claims=[Claim(text=c) for c in prop.get("claims", [])],
             round_index=round_index,

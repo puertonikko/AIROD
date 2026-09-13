@@ -41,7 +41,13 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
 
 
 def _extract_json(text: str) -> dict:
-    """Pull a JSON object out of a model response, tolerating code fences."""
+    """Pull the first JSON object out of a model response.
+
+    Tolerates code fences AND trailing content after the object (a model may
+    add a note or a second block after the JSON — that used to raise
+    "Extra data" and crash the run). ``raw_decode`` parses the first valid
+    value and ignores anything after it.
+    """
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
@@ -49,12 +55,16 @@ def _extract_json(text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Fall back to the first balanced {...} span.
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end > start:
-            return json.loads(text[start : end + 1])
-        raise
+        pass
+    # Decode the first {...} value and drop any trailing data.
+    start = text.find("{")
+    if start != -1:
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(text[start:])
+            return obj
+        except json.JSONDecodeError:
+            pass
+    raise ValueError("no parseable JSON object in model response")
 
 
 class BudgetExceeded(RuntimeError):
