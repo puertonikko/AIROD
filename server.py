@@ -146,12 +146,18 @@ def _execute(req: RunRequest, progress=None) -> dict:
     results = orch.run(max_rounds=req.rounds, on_round=_on_round)
     payload = _payload(results)
 
-    # Handoff stage: compile the debate into a manufacturer-ready dossier.
+    # Handoff stage: compile the debate into a manufacturer-ready dossier,
+    # streaming each section into the job as it completes.
     if req.dossier and results:
-        if progress is not None:
-            progress({**payload, "synthesizing": True})
         transcript = _compile_transcript(results)
-        sections, _ = llm.synthesize(mission.title, mission.goal, transcript)
+
+        def _dossier_progress(secs):
+            if progress is not None:
+                progress({**payload, "dossier": list(secs), "synthesizing": True})
+
+        sections, _ = llm.synthesize(
+            mission.title, mission.goal, transcript, progress=_dossier_progress
+        )
         payload["dossier"] = sections
         payload["costUsd"] = memory.total_cost(mission.id)
 

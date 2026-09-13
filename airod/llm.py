@@ -71,6 +71,20 @@ class BudgetExceeded(RuntimeError):
     """Raised before a call that would push a mission over its budget."""
 
 
+# The dossier is generated one section per call so no single response truncates.
+_DOSSIER_SECTIONS: list[tuple[str, str]] = [
+    ("1. Executive Summary", "the verdict on the mission, the honest re-specified target, and the key findings that shaped the design"),
+    ("2. Requirements & Constraints", "functional and non-functional requirements and hard limits, as tables"),
+    ("3. System Architecture", "a mermaid graph/flowchart block diagram plus a short component-rationale table"),
+    ("4. Engineering Analysis & Calculations", "the key equations, one worked numeric example, and tolerances"),
+    ("5. Software / Process Flow", "a mermaid flowchart AND a mermaid sequenceDiagram of the runtime flow"),
+    ("6. Interfaces & Signals", "interface and signal specifications, as tables"),
+    ("7. Test & Validation Plan", "tests with explicit pass/fail acceptance criteria and a gate schedule"),
+    ("8. Risks & Open Questions", "a risk register table drawn from the critics and skeptics, with mitigations and residual risk"),
+    ("9. Manufacturing Handoff Checklist & Bill of Materials", "a handoff checklist and a bill of materials / next-steps list"),
+]
+
+
 class LLMClient:
     def __init__(self, mock: bool = False, effort: str | None = None) -> None:
         self.mock = mock
@@ -197,68 +211,72 @@ class LLMClient:
 
     def synthesize(
         self, mission_title: str, mission_goal: str, transcript: str,
-        model: str = "claude-opus-5",
+        model: str = "claude-opus-5", progress=None,
     ) -> tuple[list[dict], Usage]:
         """Compile the debate into a manufacturer-ready R&D dossier.
 
-        Returns (sections, usage) where each section is {"title", "markdown"}.
-        Diagrams are emitted as ```mermaid fenced blocks the UI renders.
+        Generated ONE SECTION PER CALL — a single giant response can exceed the
+        output limit and truncate into invalid JSON (which then can't be parsed).
+        Per-section calls each fit comfortably, parse independently, and stream
+        in via ``progress(sections_so_far)``. Diagrams are ```mermaid fenced
+        blocks the UI renders.
         """
         if self.mock:
-            return _mock_dossier(mission_title), Usage(input_tokens=200, output_tokens=400)
+            secs = _mock_dossier(mission_title)
+            if progress:
+                progress(list(secs))
+            return secs, Usage(input_tokens=200, output_tokens=400)
 
         system = (
-            "You are the Lead R&D Engineer compiling a complete, manufacturer-ready "
-            "handoff dossier from your team's findings. Be concrete, quantitative, and "
-            "practical — an outside engineer must be able to build from this. Use the "
-            "team's actual conclusions; do not invent capabilities. Flag every "
-            "assumption and every item needing licensed-engineer or lab verification."
+            "You are the Lead R&D Engineer writing ONE section of a complete, "
+            "manufacturer-ready handoff dossier from your team's findings. Be concrete, "
+            "quantitative, and practical — an outside engineer must be able to build "
+            "from this. Use the team's actual conclusions; do not invent capabilities. "
+            "Flag every assumption and every item needing licensed-engineer or lab "
+            "verification."
         )
-        sections_spec = (
-            "Produce these sections in order: "
-            "1) Executive Summary; 2) Requirements & Constraints (table); "
-            "3) System Architecture (a ```mermaid graph/flowchart block diagram); "
-            "4) Engineering Analysis & Calculations (key equations, a worked example, "
-            "tolerances); 5) Software / Process Flow (a ```mermaid flowchart AND a "
-            "```mermaid sequenceDiagram); 6) Interfaces & Signals (tables); "
-            "7) Test & Validation Plan; 8) Risks & Open Questions (from the critics/"
-            "skeptics); 9) Manufacturing Handoff Checklist & Bill of Materials."
-        )
-        user = (
+        base = (
             f"MISSION: {mission_title}\nGOAL: {mission_goal}\n\n"
             f"TEAM FINDINGS (hypotheses, claims, evidence, critiques):\n{transcript}\n\n"
-            f"{sections_spec}\n\n"
-            'Return ONLY a JSON object: {"sections":[{"title": str, "markdown": str}]}. '
-            "Put diagrams inside ```mermaid fenced code blocks. No prose outside the JSON."
         )
 
         client = self._anthropic()
         usage = Usage()
-        try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=32000,
-                thinking={"type": "adaptive"},
-                output_config={"effort": "high"},  # this is the deliverable — spend here
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            ) as stream:
-                msg = stream.get_final_message()
-        except Exception as exc:
-            print(f"[synthesize] failed: {type(exc).__name__}: {exc}", flush=True)
-            return [], usage
+        sections: list[dict] = []
+        for stitle, guidance in _DOSSIER_SECTIONS:
+            user = (
+                base
+                + f'Write ONLY this one section: "{stitle}". Include: {guidance}. '
+                "Put any diagram in a ```mermaid fenced code block. "
+                'Return ONLY a JSON object: {"title": "' + stitle + '", "markdown": "..."}.'
+            )
+            try:
+                with client.messages.stream(
+                    model=model,
+                    max_tokens=16000,
+                    thinking={"type": "adaptive"},
+                    output_config={"effort": "high"},  # the deliverable — spend here
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                ) as stream:
+                    msg = stream.get_final_message()
+                text = "".join(
+                    b.text for b in msg.content if getattr(b, "type", None) == "text"
+                )
+                usage.input_tokens += msg.usage.input_tokens
+                usage.output_tokens += msg.usage.output_tokens
+                sec = _extract_json(text)
+                sections.append(
+                    {"title": sec.get("title", stitle), "markdown": sec.get("markdown", "")}
+                )
+            except Exception as exc:
+                print(f"[synthesize] section '{stitle}' failed: {exc}", flush=True)
+                sections.append({"title": stitle, "markdown": "_(section generation failed)_"})
+            if progress is not None:
+                progress(list(sections))
 
-        text = "".join(
-            b.text for b in msg.content if getattr(b, "type", None) == "text"
-        )
-        usage.input_tokens = msg.usage.input_tokens
-        usage.output_tokens = msg.usage.output_tokens
         usage.cost_usd = estimate_cost(model, usage.input_tokens, usage.output_tokens)
-        try:
-            return _extract_json(text).get("sections", []), usage
-        except Exception:
-            # Fall back to a single free-text section so nothing is lost.
-            return [{"title": "R&D Dossier", "markdown": text}], usage
+        return sections, usage
 
 
 def _mock_dossier(title: str) -> list[dict]:
